@@ -2,7 +2,7 @@
 
 ## Visión General
 
-El proyecto TCP socket se basa en un modelo cliente-servidor donde el servidor escucha conexiones entrantes y los clientes se conectan para intercambiar datos. TCP proporciona comunicación confiable y ordenada a costa de mayor latencia comparado con UDP.
+El proyecto TCP socket se basa en un modelo cliente-servidor local donde el servidor escucha conexiones entrantes y un cliente se conecta para intercambiar datos.
 
 ## Arquitectura del Servidor
 
@@ -30,7 +30,7 @@ bind(server_fd, (struct sockaddr *)&address, sizeof(address));
 listen(server_fd, 1);
 ```
 - **bind()**: Asocia el socket con una dirección IP y puerto específicos
-- **listen()**: Pone el socket en modo de escucha con backlog de 1 conexión
+- **listen()**: Pone el socket en modo de escucha y espera por una unica conexion
 
 ### 4. Aceptación de Conexiones
 ```cpp
@@ -58,78 +58,27 @@ auto fin = std::chrono::high_resolution_clock::now();
 auto duracion = std::chrono::duration_cast<std::chrono::microseconds>(fin - inicio);
 ```
 
-## Protocolo TCP: 3-Way Handshake
-
-El establecimiento de conexión TCP requiere tres mensajes:
-
-```
-Cliente → Servidor: SYN (Solicitud de conexión)
-Servidor → Cliente: SYN+ACK (Confirmación y solicitud)
-Cliente → Servidor: ACK (Confirmación final)
-```
-
-**Importancia**: Este handshake ocurre solo UNA vez por conexión, no por mensaje.
-
-## Conexión Persistente vs Conexión por Mensaje
-
-### Conexión Persistente (Recomendado)
-```cpp
-connect();  // Una sola vez
-while(true) {
-    send();
-    recv();
-}
-```
-**Ventaja**: Elimina overhead de handshake en cada mensaje
-
-### Conexión por Mensaje (Ineficiente)
-```cpp
-while(true) {
-    connect();  // ¡Overhead innecesario!
-    send();
-    recv();
-    close();
-}
-```
-**Desventaja**: 3-way handshake en cada mensaje (~1-3ms adicionales)
-
-## Estructuras de Datos Clave
-
-### sockaddr_in
-```cpp
-struct sockaddr_in address;
-address.sin_family = AF_INET;
-address.sin_addr.s_addr = INADDR_ANY;  // 0.0.0.0 (todas las interfaces)
-address.sin_port = htons(PORT);        // Network byte order
-```
-
-### Conversión de Byte Order
-```cpp
-htons(PORT);  // Host TO Network Short (16 bits)
-inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);  // String a binario
-```
-
 ## Optimizaciones de Latencia
 
 ### 1. TCP_NODELAY - La Más Crítica
 - **Problema**: Algoritmo de Nagle agrupa paquetes pequeños
 - **Efecto**: Delay de 40-200ms en aplicaciones interactivas
 - **Solución**: Deshabilitar para envío inmediato
-- **Impacto**: Latencia de ~2-5ms → ~200-500μs
+- **Impacto**: Latencia de ~2-5ms
 
-### 2. High-Resolution Timing
-```cpp
-std::chrono::high_resolution_clock::now()
-std::chrono::duration_cast<std::chrono::microseconds>()
-```
-- Precisión de nanosegundos para medición exacta
-- Esencial para detectar optimizaciones de latencia
+### Conexión Persistente
+- **Problema**: 3-way handshake se realiza durante la conexion
+- **Efecto**: Este handshake genera un overhead que se traduce en mas delay en la comunicacion
+- **Solución**: Conectar una sola vez, mantener la escucha en bucle
+- **Impacto**: Latencia de ~1-2ms
 
-### 3. APIs Específicas de Socket
+Ejemplo:
 ```cpp
-send() / recv()  // Específicas para sockets
-vs
-write() / read() // Genéricas para file descriptors
+connect();  // Una sola vez
+while(true) {
+    send();
+    recv();
+}
 ```
 
 ## Comparación de Rendimiento
@@ -140,20 +89,6 @@ write() / read() // Genéricas para file descriptors
 | TCP + TCP_NODELAY | 200-500 μs | ✅ Aplicaciones normales |
 | TCP + Conexión persistente | 100-300 μs | ✅ Aplicaciones críticas |
 | UDP | 50-200 μs | ✅ Gaming, streaming |
-
-## Stack de Protocolos
-
-```
-┌─────────────────┐
-│   Aplicación    │ ← Socket API (send/recv)
-├─────────────────┤
-│   TCP           │ ← Reliability, flow control
-├─────────────────┤
-│   IP            │ ← Routing (127.0.0.1 = localhost)
-├─────────────────┤
-│   Loopback      │ ← Interface virtual en memoria
-└─────────────────┘
-```
 
 ## Casos de Uso Reales
 
@@ -171,27 +106,7 @@ write() / read() // Genéricas para file descriptors
 - **MQTT sobre TCP**: Confiabilidad para datos críticos
 - **CoAP sobre UDP**: Eficiencia energética para sensores battery-powered
 
-## Debugging y Medición
-
-### Herramientas de Red
-```bash
-netstat -tulpn | grep 8080    # Ver conexiones activas
-tcpdump -i lo port 8080       # Capturar tráfico
-ss -tuln                      # Estado de sockets
-```
-
-### Compilación Optimizada
-```bash
-g++ -O3 -march=native -flto -pthread programa.cpp -o programa
-```
-
 ## Limitaciones y Consideraciones
-
-### File Descriptor Limits
-```bash
-ulimit -n        # Ver límite actual (~1024)
-ulimit -n 65536  # Aumentar límite
-```
 
 ### Memory per Connection
 - ~8-32KB por conexión TCP en kernel buffers
@@ -203,5 +118,5 @@ ulimit -n 65536  # Aumentar límite
 - **epoll/kqueue**: Hasta ~10000+ conexiones
 - **Async I/O**: Escalabilidad limitada por CPU, no por I/O
 
-### Consideración Key
-En localhost (127.0.0.1), la pérdida de paquetes es prácticamente cero, por lo que UDP ofrece ventajas de velocidad sin sacrificar confiabilidad significativa.
+### Consideración Clave
+En localhost (127.0.0.1), la pérdida de paquetes es prácticamente cero, por lo que UDP ofrece ventajas de velocidad sin sacrificar confiabilidad significativa, no obstante se decidió usar TCP ya que es la base para protocolos que son standard en el internet del dia a dia como el protocolo RTSP
